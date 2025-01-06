@@ -3,7 +3,7 @@ enum Var {
   Arg(Int)
   Tmp(Int)
   Idx(Int)
-} derive(Eq)
+} derive(Eq, Hash)
 
 ///|
 pub fn Var::arg(id : Int) -> Var {
@@ -37,7 +37,7 @@ impl ToJson for Var with to_json(self : Var) -> Json {
 ///|
 priv enum Cmp {
   Lt
-} derive(Eq, ToJson)
+} derive(Eq, ToJson, Hash)
 
 ///|
 enum Expr {
@@ -54,7 +54,7 @@ enum Expr {
   Not(Expr)
   If(Expr, Expr, Expr)
   Let(Var, @type.Type, Expr, Expr)
-} derive(Eq)
+} derive(Eq, Hash)
 
 ///|
 pub fn Expr::i32(int : Int) -> Expr {
@@ -92,13 +92,7 @@ pub fn Expr::add(self : Expr, other : Expr) -> Expr {
     (I32(self), I32(other)) => I32(self + other)
     (I32(0), other) => other
     (self, I32(0)) => self
-    (Sub(a, b), c) => {
-      if b == c {
-        a
-      } else {
-        Add(Sub(a, b), c)
-      }
-    }
+    (Sub(a, b), c) => if b == c { a } else { Add(Sub(a, b), c) }
     (self, other) => Add(self, other)
   }
 }
@@ -150,6 +144,7 @@ pub fn Expr::div(self : Expr, other : Expr) -> Expr {
     (_, I32(0)) => abort("Division by zero")
     (I32(self), I32(other)) => I32(self / other)
     (self, I32(1)) => self
+    (Mul(a, b), c) => if b == c { a } else { Div(Mul(a, b), c) }
     (self, other) => Div(self, other)
   }
 }
@@ -165,6 +160,7 @@ pub fn Expr::mod(self : Expr, other : Expr) -> Expr {
     (_, I32(0)) => abort("Division by zero")
     (I32(self), I32(other)) => I32(self % other)
     (_, I32(1)) => I32(0)
+    (Mul(a, b), c) => if b == c { I32(0) } else { Mod(Mul(a, b), c) }
     (self, other) => Mod(self, other)
   }
 }
@@ -256,7 +252,7 @@ pub fn Expr::subst(self : Expr, var : Var, expr : Expr) -> Expr {
 }
 
 ///|
-impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
+pub impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
   match self {
     Bool(true) => logger.write_string("true")
     Bool(false) => logger.write_string("false")
@@ -273,7 +269,7 @@ impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
     If(cond, if_true, if_false) =>
       logger.write_string("if \{cond} \{if_true} else \{if_false}")
     Let(var, ty, expr, body) =>
-      logger.write_string("let \{var} : \{ty} = \{expr} in \{body}")
+      logger.write_string("let \{var} : \{ty} = \{expr} in\n\{body}")
   }
 }
 

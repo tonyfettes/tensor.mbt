@@ -154,38 +154,64 @@ trait Dtype {
 }
 
 ///|
+fn compile_index(
+  shape : Array[Int],
+  block : Array[Int],
+  k : (@expr.Expr) -> @expr.Expr
+) -> @expr.Expr {
+  fn compile_index_i(
+    i : Int,
+    acc : @expr.Expr,
+    k : (@expr.Expr) -> @expr.Expr
+  ) {
+    if i == shape.length() {
+      return k(acc)
+    }
+    let block_i = block[i]
+    compile_index_i(i + 1, acc.add(@expr.var_idx(i).mul_i32(block_i)), k)
+  }
+
+  compile_index_i(0, @expr.i32(0), k)
+}
+
+///|
 pub fn Tensor::compile[T : Hash + Eq + Dtype + Show](
   self : Tensor[T]
 ) -> @expr.Expr {
   let args : Array[@type.Type] = []
-  let vals : Array[FixedArray[T]] = []
+  let args_cache : Map[@immut/array.T[T], Int] = Map::new()
   let tmps : Ref[Int] = @ref.new(0)
+  let tmps_cache : Map[@expr.Expr, Int] = Map::new()
   let ty = T::compile()
-  let cache : Map[Tensor[T], @expr.Expr] = Map::new()
-  fn fresh_var_arg(value : FixedArray[T]) -> @expr.Expr {
+  let cache : Map[(Tensor[T], @immut/array.T[@expr.Expr]), @expr.Expr] = Map::new()
+  fn get_var_arg(value : FixedArray[T]) -> @expr.Expr {
+    let immut_value = @immut/array.from_iter(value.iter())
+    guard let None = args_cache[immut_value] else {
+      Some(arg_id) => return @expr.var_arg(arg_id)
+    }
     let arg_id = args.length()
     args.push(@type.ptr_i32)
-    vals.push(value)
+    args_cache[immut_value] = arg_id
     @expr.var_arg(arg_id)
   }
 
-  fn fresh_tmp() -> @expr.Var {
+  fn get_tmp(expr : @expr.Expr) -> @expr.Var {
+    guard let None = tmps_cache[expr] else {
+      Some(tmp_id) => return @expr.tmp(tmp_id)
+    }
     let tmp_id = tmps.val
     tmps.val += 1
+    tmps_cache[expr] = tmp_id
     @expr.tmp(tmp_id)
-  }
-
-  fn id(expr : @expr.Expr) -> @expr.Expr {
-    expr
   }
 
   fn compile(
     self : Tensor[T],
     index : Array[@expr.Expr],
-    kontinue : (@expr.Expr) -> @expr.Expr
+    k : (@expr.Expr) -> @expr.Expr
   ) -> @expr.Expr {
-    println("compiling: \{self}")
-    guard let None = cache[self] else { Some(expr) => kontinue(expr) }
+    let immut_index = @immut/array.from_iter(index.iter())
+    guard let None = cache[(self, immut_index)] else { Some(expr) => k(expr) }
     fn compute_flat_index() -> @expr.Expr {
       let shape = self.shape
       let block = self.block()
@@ -196,37 +222,44 @@ pub fn Tensor::compile[T : Hash + Eq + Dtype + Show](
       total
     }
 
-    let kontinue = fn(expr : @expr.Expr) {
-      cache[self] = expr
-      kontinue(expr)
+    let k = fn(expr : @expr.Expr) {
+      cache[(self, immut_index)] = expr
+      k(expr)
     }
     match self.graph {
       Val(value) => {
-        let total = compute_flat_index()
-        let var_arg = fresh_var_arg(value)
-        let tmp = fresh_tmp()
-        let var_tmp = @expr.var(tmp)
-        @expr.let_(tmp, ty, var_arg.get(total), kontinue(var_tmp))
+        let flat_index = compute_flat_index()
+        let var_arg = get_var_arg(value)
+        let tmp_idx = get_tmp(flat_index)
+        let get_expr = var_arg.get(@expr.var(tmp_idx))
+        let tmp_get = get_tmp(get_expr)
+        @expr.let_(
+          tmp_idx,
+          @type.i32,
+          flat_index,
+          @expr.let_(tmp_get, ty, get_expr, k(@expr.var(tmp_get))),
+        )
       }
       Binary(op, a, b) =>
         compile(a, index, fn(a) {
           compile(b, index, fn(b) {
-            let tmp = fresh_tmp()
             let tmp_val = match op {
               Add => a.add(b)
               Mul => a.mul(b)
             }
-            @expr.let_(tmp, ty, tmp_val, kontinue(@expr.var(tmp)))
+            let tmp = get_tmp(tmp_val)
+            @expr.let_(tmp, ty, tmp_val, k(@expr.var(tmp)))
           })
         })
       Get(a) => {
-        let mut total = compute_flat_index()
+        let flat_index = compute_flat_index()
+        let mut flat_index = flat_index
         let a_index = []
         for b in a.block() {
-          a_index.push(total.div_i32(b))
-          total = total.mod_i32(b)
+          a_index.push(flat_index.div_i32(b))
+          flat_index = flat_index.mod_i32(b)
         }
-        compile(a, a_index, kontinue)
+        compile(a, a_index, k)
       }
       Broadcast(a) => {
         let a_index = []
@@ -237,41 +270,47 @@ pub fn Tensor::compile[T : Hash + Eq + Dtype + Show](
             a_index.push(index[i].mod_i32(s))
           }
         }
-        compile(a, a_index, kontinue)
+        compile(a, a_index, k)
       }
       Reduce(op, a, dim) => {
-        let tmp = fresh_tmp()
         let a_index = []
         for i in 0..<dim {
           a_index.push(index[i])
         }
-        a_index.push(@expr.var(tmp))
+        a_index.push(@expr.i32(0))
         for i in (dim + 1)..<a.shape.length() {
           a_index.push(index[i - 1])
         }
-        let a_expr = compile(a, a_index, kontinue)
-        let mut expr = @expr.let_(tmp, @type.i32, @expr.i32(0), a_expr)
-        for i in 1..<a.shape[dim] {
-          let expr_i = @expr.let_(tmp, @type.i32, @expr.i32(i), a_expr)
-          match op {
-            Add => expr = expr.add(expr_i)
-            Mul => expr = expr.mul(expr_i)
+        fn compile_i(
+          acc : @expr.Expr,
+          i : Int,
+          k : (@expr.Expr) -> @expr.Expr
+        ) {
+          if i == a.shape[dim] {
+            return k(acc)
           }
+          a_index[dim] = @expr.i32(i)
+          compile(a, a_index, fn(expr) {
+            let tmp_val = match op {
+              Add => acc.add(expr)
+              Mul => acc.mul(expr)
+            }
+            let tmp = get_tmp(tmp_val)
+            @expr.let_(tmp, ty, tmp_val, compile_i(@expr.var(tmp), i + 1, k))
+          })
         }
-        expr
+
+        compile(a, a_index, fn(expr) { compile_i(expr, 1, k) })
       }
       Concat(xs, dim) => {
         let mut total = xs[0].shape[dim]
-        let mut expr = compile(xs[0], index, kontinue)
+        let index = index.copy()
+        let mut expr = compile(xs[0], index, k)
         for i in 1..<xs.length() {
           let x = xs[i]
           let index_dim = index[dim]
           index[dim] = index[dim].sub_i32(total)
-          expr = index_dim.if_ge(
-            @expr.i32(total),
-            compile(x, index, kontinue),
-            expr,
-          )
+          expr = index_dim.if_ge(@expr.i32(total), compile(x, index, k), expr)
           total += x.shape[dim]
         }
         expr
@@ -280,7 +319,7 @@ pub fn Tensor::compile[T : Hash + Eq + Dtype + Show](
   }
 
   let index = Array::makei(self.shape.length(), fn(i) { @expr.var_idx(i) })
-  compile(self, index, id)
+  compile(self, index, fn(expr) { expr })
 }
 
 ///|
@@ -325,127 +364,32 @@ impl Dtype for Int with compile() -> @type.Type { @type.i32 }
 
 test {
   let a = Tensor::new([2, 3], Val([1, 2, 3, 4, 5, 6]))
-  let b = Tensor::new([2, 3], Val([7, 8, 9, 10, 11, 12]))
-  @json.inspect!(a.matmul(b).compile(), content={
-    "add": [
-      {
-        "add": [
-          {
-            "let": {
-              "var": "tmp_0",
-              "ty": "i32",
-              "expr": 0,
-              "body": {
-                "let": {
-                  "var": "tmp_1",
-                  "ty": "i32",
-                  "expr": {
-                    "get": [
-                      "arg_0",
-                      { "add": [{ "mul": ["idx_1", 3] }, "tmp_0"] },
-                    ],
-                  },
-                  "body": {
-                    "let": {
-                      "var": "tmp_2",
-                      "ty": "i32",
-                      "expr": {
-                        "get": [
-                          "arg_1",
-                          { "add": [{ "mul": ["idx_0", 3] }, "tmp_0"] },
-                        ],
-                      },
-                      "body": {
-                        "let": {
-                          "var": "tmp_3",
-                          "ty": "i32",
-                          "expr": { "mul": ["tmp_1", "tmp_2"] },
-                          "body": "tmp_3",
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          {
-            "let": {
-              "var": "tmp_0",
-              "ty": "i32",
-              "expr": 1,
-              "body": {
-                "let": {
-                  "var": "tmp_1",
-                  "ty": "i32",
-                  "expr": {
-                    "get": [
-                      "arg_0",
-                      { "add": [{ "mul": ["idx_1", 3] }, "tmp_0"] },
-                    ],
-                  },
-                  "body": {
-                    "let": {
-                      "var": "tmp_2",
-                      "ty": "i32",
-                      "expr": {
-                        "get": [
-                          "arg_1",
-                          { "add": [{ "mul": ["idx_0", 3] }, "tmp_0"] },
-                        ],
-                      },
-                      "body": {
-                        "let": {
-                          "var": "tmp_3",
-                          "ty": "i32",
-                          "expr": { "mul": ["tmp_1", "tmp_2"] },
-                          "body": "tmp_3",
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        ],
-      },
-      {
-        "let": {
-          "var": "tmp_0",
-          "ty": "i32",
-          "expr": 2,
-          "body": {
-            "let": {
-              "var": "tmp_1",
-              "ty": "i32",
-              "expr": {
-                "get": ["arg_0", { "add": [{ "mul": ["idx_1", 3] }, "tmp_0"] }],
-              },
-              "body": {
-                "let": {
-                  "var": "tmp_2",
-                  "ty": "i32",
-                  "expr": {
-                    "get": [
-                      "arg_1",
-                      { "add": [{ "mul": ["idx_0", 3] }, "tmp_0"] },
-                    ],
-                  },
-                  "body": {
-                    "let": {
-                      "var": "tmp_3",
-                      "ty": "i32",
-                      "expr": { "mul": ["tmp_1", "tmp_2"] },
-                      "body": "tmp_3",
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    ],
-  })
+  let b = Tensor::new([3, 2], Val([7, 8, 9, 10, 11, 12]))
+  inspect!(
+    a.matmul(b).compile(),
+    content=
+      #|let tmp_0 : i32 = idx_1 * 3 in
+      #|let tmp_1 : i32 = arg_0[tmp_0] in
+      #|let tmp_2 : i32 = idx_0 * 2 in
+      #|let tmp_3 : i32 = arg_1[tmp_2] in
+      #|let tmp_4 : i32 = tmp_1 * tmp_3 in
+      #|let tmp_5 : i32 = idx_1 * 3 + 1 in
+      #|let tmp_6 : i32 = arg_0[tmp_5] in
+      #|let tmp_7 : i32 = idx_0 * 2 + 1 in
+      #|let tmp_8 : i32 = arg_1[tmp_7] in
+      #|let tmp_9 : i32 = tmp_6 * tmp_8 in
+      #|let tmp_10 : i32 = tmp_4 + tmp_9 in
+      #|let tmp_11 : i32 = idx_1 * 3 + 2 in
+      #|let tmp_12 : i32 = arg_0[tmp_11] in
+      #|let tmp_13 : i32 = tmp_12 * tmp_3 in
+      #|let tmp_14 : i32 = tmp_10 + tmp_13 in
+      #|let tmp_15 : i32 = tmp_1 * tmp_8 in
+      #|let tmp_16 : i32 = tmp_14 + tmp_15 in
+      #|let tmp_17 : i32 = tmp_6 * tmp_3 in
+      #|let tmp_18 : i32 = tmp_16 + tmp_17 in
+      #|let tmp_19 : i32 = tmp_12 * tmp_8 in
+      #|let tmp_20 : i32 = tmp_18 + tmp_19 in
+      #|tmp_20
+    ,
+  )
 }
