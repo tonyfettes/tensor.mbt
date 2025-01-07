@@ -11,13 +11,13 @@ pub fn Var::arg(id : Int) -> Var {
 }
 
 ///|
-pub fn Var::idx(id : Int) -> Var {
-  Idx(id)
+pub fn Var::tmp(id : Int) -> Var {
+  Tmp(id)
 }
 
 ///|
-pub fn Var::tmp(id : Int) -> Var {
-  Tmp(id)
+pub fn Var::idx(id : Int) -> Var {
+  Idx(id)
 }
 
 ///|
@@ -41,7 +41,7 @@ priv enum Cmp {
 
 ///|
 enum Expr {
-  Bool(Bool)
+  Bin(Bool)
   I32(Int)
   Var(Var)
   Add(Expr, Expr)
@@ -49,12 +49,21 @@ enum Expr {
   Mul(Expr, Expr)
   Mod(Expr, Expr)
   Div(Expr, Expr)
-  Get(Expr, Expr)
+  Get(Var, Expr)
+  Set(Var, Expr, Expr)
   Cmp(Cmp, Expr, Expr)
   Not(Expr)
-  If(Expr, Expr, Expr)
-  Let(Var, @type.Type, Expr, Expr)
+  Sel(Expr, Expr, Expr)
+  Let(Int, Expr, Expr)
+  Mut(Int, Expr)
+  For(Int, Int, Expr)
+  Seq(Expr, Expr)
 } derive(Eq, Hash)
+
+///|
+pub fn Expr::bin(bool : Bool) -> Expr {
+  Bin(bool)
+}
 
 ///|
 pub fn Expr::i32(int : Int) -> Expr {
@@ -67,23 +76,13 @@ pub fn Expr::var(var : Var) -> Expr {
 }
 
 ///|
-pub fn Expr::var_arg(id : Int) -> Expr {
-  Var(Arg(id))
-}
-
-///|
-pub fn Expr::var_idx(id : Int) -> Expr {
-  Var(Idx(id))
-}
-
-///|
-pub fn Expr::var_tmp(id : Int) -> Expr {
-  Var(Tmp(id))
-}
-
-///|
-pub fn Expr::get(self : Expr, index : Expr) -> Expr {
+pub fn Var::get(self : Var, index : Expr) -> Expr {
   Get(self, index)
+}
+
+///|
+pub fn Var::set(self : Var, index : Expr, value : Expr) -> Expr {
+  Set(self, index, value)
 }
 
 ///|
@@ -173,89 +172,53 @@ pub fn Expr::mod_i32(self : Expr, int : Int) -> Expr {
 ///|
 pub fn Expr::cmp_lt(self : Expr, other : Expr) -> Expr {
   match (self, other) {
-    (I32(self), I32(other)) => Bool(self < other)
+    (I32(self), I32(other)) => Bin(self < other)
     (self, other) => Cmp(Lt, self, other)
   }
 }
 
 ///|
+pub fn Expr::cmp_ge(self : Expr, other : Expr) -> Expr {
+  self.cmp_lt(other).not()
+}
+
+///|
+pub fn Expr::cmp_ge_i32(self : Expr, i32 : Int) -> Expr {
+  self.cmp_ge(I32(i32))
+}
+
+///|
 pub fn Expr::not(self : Expr) -> Expr {
   match self {
-    Bool(self) => Bool(not(self))
+    Bin(self) => Bin(not(self))
     self => Not(self)
   }
 }
 
 ///|
-pub fn Expr::if_(self : Expr, if_true : Expr, if_false : Expr) -> Expr {
+pub fn Expr::let_(var : Int, value : Expr, body : Expr) -> Expr {
+  Let(var, value, body)
+}
+
+///|
+pub fn Expr::sel(self : Expr, if_true : Expr, if_false : Expr) -> Expr {
   match self {
-    Bool(true) => if_true
-    Bool(false) => if_false
-    self => If(self, if_true, if_false)
+    Bin(true) => if_true
+    Bin(false) => if_false
+    self => Sel(self, if_true, if_false)
   }
 }
 
 ///|
-pub fn Expr::if_ge(
-  self : Expr,
-  other : Expr,
-  if_true : Expr,
-  if_false : Expr
-) -> Expr {
-  if_(self.cmp_lt(other).not(), if_true, if_false)
-}
-
-///|
-pub fn Expr::let_idx(id : Int, expr : Expr, body : Expr) -> Expr {
-  Let(Idx(id), @type.i32, expr, body)
-}
-
-///|
-pub fn Expr::let_tmp(id : Int, expr : Expr, body : Expr) -> Expr {
-  Let(Tmp(id), @type.i32, expr, body)
-}
-
-///|
-pub fn Expr::let_(var : Var, ty : @type.Type, expr : Expr, body : Expr) -> Expr {
-  Let(var, ty, expr, body)
-}
-
-///|
-pub fn Expr::subst(self : Expr, var : Var, expr : Expr) -> Expr {
-  match self {
-    Bool(_) | I32(_) => self
-    Var(self_var) => if self_var == var { expr } else { self }
-    Add(a, b) => Add(a.subst(var, expr), b.subst(var, expr))
-    Sub(a, b) => Sub(a.subst(var, expr), b.subst(var, expr))
-    Mul(a, b) => Mul(a.subst(var, expr), b.subst(var, expr))
-    Div(a, b) => Div(a.subst(var, expr), b.subst(var, expr))
-    Mod(a, b) => Mod(a.subst(var, expr), b.subst(var, expr))
-    Get(x, i) => Get(x.subst(var, expr), i.subst(var, expr))
-    Not(a) => Not(a.subst(var, expr))
-    Cmp(op, a, b) => Cmp(op, a.subst(var, expr), b.subst(var, expr))
-    If(cond, if_true, if_false) => {
-      let cond = cond.subst(var, expr)
-      let if_true = if_true.subst(var, expr)
-      let if_false = if_false.subst(var, expr)
-      If(cond, if_true, if_false)
-    }
-    Let(let_var, let_ty, let_expr, let_body) => {
-      let let_expr = let_expr.subst(var, expr)
-      if let_var == var {
-        Let(let_var, let_ty, let_expr, let_body)
-      } else {
-        let let_body = let_body.subst(var, expr)
-        Let(let_var, let_ty, let_expr, let_body)
-      }
-    }
-  }
+pub fn Expr::for_(self : Int, length : Int, body : Expr) -> Expr {
+  For(self, length, body)
 }
 
 ///|
 pub impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
   match self {
-    Bool(true) => logger.write_string("true")
-    Bool(false) => logger.write_string("false")
+    Bin(true) => logger.write_string("true")
+    Bin(false) => logger.write_string("false")
     I32(int) => logger.write_string(int.to_string())
     Var(var) => var.output(logger)
     Add(a, b) => logger.write_string("\{a} + \{b}")
@@ -264,20 +227,30 @@ pub impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
     Div(a, b) => logger.write_string("\{a} / \{b}")
     Mod(a, b) => logger.write_string("\{a} % \{b}")
     Get(x, i) => logger.write_string("\{x}[\{i}]")
+    Set(x, i, v) => logger.write_string("\{x}[\{i}] = \{v}")
     Cmp(Lt, a, b) => logger.write_string("\{a} < \{b}")
     Not(a) => logger.write_string("!\{a}")
-    If(cond, if_true, if_false) =>
+    Sel(cond, if_true, if_false) =>
       logger.write_string("if \{cond} \{if_true} else \{if_false}")
-    Let(var, ty, expr, body) =>
-      logger.write_string("let \{var} : \{ty} = \{expr} in\n\{body}")
+    Let(var, expr, body) => {
+      logger.write_string("let tmp_\{var} = \{expr} in")
+      logger.write_string("\{body}")
+    }
+    Mut(var, expr) => logger.write_string("tmp_\{var} = \{expr}")
+    Seq(a, b) => logger.write_string("\{a}\n\{b}")
+    For(var, len, expr) => {
+      logger.write_string("for tmp_\{var} in 0..\{len} {\n")
+      logger.write_string("  \{expr}\n")
+      logger.write_string("}")
+    }
   }
 }
 
 ///|
 pub impl ToJson for Expr with to_json(self : Expr) -> Json {
   match self {
-    Bool(true) => Json::True
-    Bool(false) => Json::False
+    Bin(true) => Json::True
+    Bin(false) => Json::False
     I32(i32) => Json::Number(i32.to_double())
     Var(var) => var.to_string().to_json()
     Add(a, b) => { "add": [a.to_json(), b.to_json()] }
@@ -286,9 +259,10 @@ pub impl ToJson for Expr with to_json(self : Expr) -> Json {
     Div(a, b) => { "div": [a.to_json(), b.to_json()] }
     Mod(a, b) => { "mod": [a.to_json(), b.to_json()] }
     Get(a, b) => { "get": [a.to_json(), b.to_json()] }
+    Set(a, b, c) => { "set": [a.to_json(), b.to_json(), c.to_json()] }
     Cmp(Lt, a, b) => { "cmp": { "lt": [a.to_json(), b.to_json()] } }
     Not(a) => { "not": a.to_json() }
-    If(cond, if_true, if_false) =>
+    Sel(cond, if_true, if_false) =>
       {
         "if": {
           "cond": cond.to_json(),
@@ -296,14 +270,98 @@ pub impl ToJson for Expr with to_json(self : Expr) -> Json {
           "else": if_false.to_json(),
         },
       }
-    Let(var, ty, expr, body) =>
+    Let(var, expr, body) =>
       {
         "let": {
           "var": var.to_json(),
-          "ty": ty.to_json(),
           "expr": expr.to_json(),
           "body": body.to_json(),
         },
       }
+    For(var, length, body) =>
+      {
+        "for": {
+          "var": var.to_json(),
+          "length": length.to_json(),
+          "body": body.to_json(),
+        },
+      }
+    Seq(a, b) => [a.to_json(), b.to_json()]
   }
+}
+
+///|
+pub fn Expr::atomize(self : Expr) -> Expr {
+  let mut tmps = 0
+  let tmps_remap = []
+  let tmps_cache : Map[Expr, Int] = Map::new()
+  fn get_tmp(expr : Expr) -> Int {
+    guard let None = tmps_cache[expr] else { Some(tmp_id) => tmp_id }
+    let tmp_id = tmps
+    tmps += 1
+    tmps_cache[expr] = tmp_id
+    tmp_id
+  }
+
+  fn let_tmp(expr : Expr, k : (Expr) -> Expr) -> Expr {
+    guard let None = tmps_cache[expr] else {
+      Some(tmp_id) => k(var(tmp(tmp_id)))
+    }
+    let tmp_id = get_tmp(expr)
+    let tmp_var = var(tmp(tmp_id))
+    return let_(tmp_id, expr, k(tmp_var))
+  }
+
+  fn map_tmp(tmp : Int, expr : Expr) -> Unit {
+    while tmps_remap.length() < tmp + 1 {
+      tmps_remap.push(None)
+    }
+    tmps_remap[tmp] = Some(expr)
+  }
+
+  fn id(expr : Expr) -> Expr {
+    expr
+  }
+
+  fn atomize(expr : Expr, k : (Expr) -> Expr) -> Expr {
+    match expr {
+      I32(val) => k(i32(val))
+      Bin(val) => k(bin(val))
+      Var(Arg(id)) => k(var(arg(id)))
+      Var(Tmp(id)) =>
+        match tmps_remap[id] {
+          None => abort("Tmp variable not found")
+          Some(expr) => k(expr)
+        }
+      Var(Idx(id)) => k(var(idx(id)))
+      Add(a, b) =>
+        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(add(a, b), k) }) })
+      Sub(a, b) =>
+        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(sub(a, b), k) }) })
+      Mul(a, b) =>
+        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(mul(a, b), k) }) })
+      Div(a, b) =>
+        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(div(a, b), k) }) })
+      Mod(a, b) =>
+        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(mod(a, b), k) }) })
+      Get(a, b) => atomize(b, fn(b) { let_tmp(get(a, b), k) })
+      Set(a, b, c) =>
+        atomize(b, fn(b) { atomize(c, fn(c) { let_tmp(set(a, b, c), k) }) })
+      Cmp(Lt, a, b) =>
+        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(cmp_lt(a, b), k) }) })
+      Not(a) => atomize(a, fn(a) { let_tmp(Expr::not(a), k) })
+      Sel(cond, if_true, if_false) =>
+        atomize(cond, fn(cond) {
+          let sel_val = sel(cond, atomize(if_true, id), atomize(if_false, id))
+          let_tmp(sel_val, k)
+        })
+      Let(var, expr, body) =>
+        atomize(expr, fn(expr) {
+          map_tmp(var, expr)
+          k(atomize(body, id))
+        })
+    }
+  }
+
+  atomize(self, fn(expr) { expr })
 }

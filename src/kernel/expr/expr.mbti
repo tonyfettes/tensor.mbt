@@ -1,0 +1,47 @@
+package tonyfettes/tensor/kernel/expr
+
+// Values
+
+// Types and methods
+type Expr
+impl Expr {
+  add(Self, Self) -> Self
+  add_i32(Self, Int) -> Self
+  atomize(Self) -> Self
+  bin(Bool) -> Self
+  cmp_ge(Self, Self) -> Self
+  cmp_ge_i32(Self, Int) -> Self
+  cmp_lt(Self, Self) -> Self
+  div(Self, Self) -> Self
+  div_i32(Self, Int) -> Self
+  get(Self, Self) -> Self
+  i32(Int) -> Self
+  let_(Int, Self, Self) -> Self
+  mod(Self, Self) -> Self
+  mod_i32(Self, Int) -> Self
+  mul(Self, Self) -> Self
+  mul_i32(Self, Int) -> Self
+  not(Self) -> Self
+  sel(Self, Self, Self) -> Self
+  sub(Self, Self) -> Self
+  sub_i32(Self, Int) -> Self
+  var(Var) -> Self
+}
+impl Eq for Expr
+impl Hash for Expr
+impl Show for Expr
+impl ToJson for Expr
+
+type Var
+impl Var {
+  arg(Int) -> Self
+  idx(Int) -> Self
+  tmp(Int) -> Self
+}
+impl Eq for Var
+impl Hash for Var
+
+// Type aliases
+
+// Traits
+

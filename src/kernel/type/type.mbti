@@ -1,0 +1,16 @@
+package tonyfettes/tensor/kernel/type
+
+// Values
+let f32 : Type
+
+let i32 : Type
+
+// Types and methods
+type Type
+impl Eq for Type
+impl Hash for Type
+
+// Type aliases
+
+// Traits
+

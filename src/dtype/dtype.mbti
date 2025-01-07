@@ -1,0 +1,37 @@
+package tonyfettes/tensor/dtype
+
+// Values
+
+// Types and methods
+pub(all) enum Dtype {
+  I32
+  F32
+}
+
+type DtypeArray
+impl DtypeArray {
+  dtype(Self) -> Dtype
+  f32(FixedArray[Float]) -> Self
+  i32(FixedArray[Int]) -> Self
+  new(Dtype, Int) -> Self
+}
+impl ToJson for DtypeArray
+
+type DtypeValue
+
+// Type aliases
+
+// Traits
+pub trait ToDtype {
+  dtype() -> Dtype
+}
+impl ToDtype for Float
+
+pub trait ToDtypeArray {
+  to_dtype_array(FixedArray[Self]) -> DtypeArray
+}
+impl ToDtypeArray for Int
+impl ToDtypeArray for Float
+
+trait ToDtypeValue
+

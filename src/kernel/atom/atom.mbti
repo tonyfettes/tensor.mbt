@@ -1,0 +1,47 @@
+package tonyfettes/tensor/kernel/atom
+
+// Values
+
+// Types and methods
+type Atom
+impl Atom {
+  bin(Bool) -> Self
+  i32(Int) -> Self
+  var(Var) -> Self
+}
+impl Eq for Atom
+impl Hash for Atom
+
+type Expr
+impl Expr {
+  let_(Int, Inst, Self) -> Self
+  select(Atom, Self, Self) -> Self
+}
+
+type Inst
+impl Inst {
+  add(Atom, Atom) -> Self
+  cmp_lt(Atom, Atom) -> Self
+  div(Atom, Atom) -> Self
+  get(Atom, Atom) -> Self
+  mod(Atom, Atom) -> Self
+  mul(Atom, Atom) -> Self
+  not(Atom) -> Self
+  sub(Atom, Atom) -> Self
+}
+impl Eq for Inst
+impl Hash for Inst
+
+type Var
+impl Var {
+  arg(Int) -> Self
+  idx(Int) -> Self
+  tmp(Int) -> Self
+}
+impl Eq for Var
+impl Hash for Var
+
+// Type aliases
+
+// Traits
+

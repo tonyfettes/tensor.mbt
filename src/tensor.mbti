@@ -1,0 +1,30 @@
+package tonyfettes/tensor
+
+// Values
+
+// Types and methods
+type Binary
+impl Eq for Binary
+impl Hash for Binary
+impl Show for Binary
+
+type Graph
+impl[T : Eq] Eq for Graph[T]
+impl[T : Show] Show for Graph[T]
+
+type Tensor
+impl Tensor {
+  add[T](Self[T], Self[T]) -> Self[T]
+  broadcast[T](Self[T], Self[T]) -> (Self[T], Self[T])
+  compile[T : Hash + Eq + Show](Self[T]) -> @tonyfettes/tensor/kernel/expr.Expr
+  matmul[T](Self[T], Self[T]) -> Self[T]
+  mul[T](Self[T], Self[T]) -> Self[T]
+  reshape[T](Self[T], Array[Int]) -> Self[T]
+  sum[T](Self[T], Int) -> Self[T]
+}
+impl[T : Show] Show for Tensor[T]
+
+// Type aliases
+
+// Traits
+
