@@ -2,6 +2,10 @@
   "import": [
     "tonyfettes/tensor/kernel",
     "tonyfettes/tensor/kernel/expr",
-    "tonyfettes/tensor/kernel/type"
+    "tonyfettes/tensor/kernel/type",
+    "tonyfettes/tensor/compiler/wgsl"
+  ],
+  "test-import": [
+    "tonyfettes/tensor/compiler/wgsl"
   ]
 }

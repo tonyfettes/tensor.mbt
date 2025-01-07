@@ -1,5 +1,5 @@
 ///|
-enum Type {
+pub enum Type {
   I32
   F32
 } derive(Eq, Hash)

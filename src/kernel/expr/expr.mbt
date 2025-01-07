@@ -1,5 +1,5 @@
 ///|
-enum Var {
+pub enum Var {
   Arg(Int)
   Tmp(Int)
   Idx(Int)
@@ -35,14 +35,20 @@ impl ToJson for Var with to_json(self : Var) -> Json {
 }
 
 ///|
-priv enum Cmp {
+pub enum Cmp {
   Lt
 } derive(Eq, ToJson, Hash)
 
 ///|
-enum Expr {
+pub enum Left {
+  Get(Var, Expr)
+  Var(Var)
+} derive(Eq, Hash)
+
+///|
+pub enum Expr {
   Bin(Bool)
-  I32(Int)
+  U32(UInt)
   Var(Var)
   Add(Expr, Expr)
   Sub(Expr, Expr)
@@ -50,13 +56,13 @@ enum Expr {
   Mod(Expr, Expr)
   Div(Expr, Expr)
   Get(Var, Expr)
-  Set(Var, Expr, Expr)
+  Set(Left, Expr)
   Cmp(Cmp, Expr, Expr)
   Not(Expr)
   Sel(Expr, Expr, Expr)
   Let(Int, Expr, Expr)
-  Mut(Int, Expr)
-  For(Int, Int, Expr)
+  Mut(Int, Expr, Expr)
+  For(Int, UInt, Expr)
   Seq(Expr, Expr)
 } derive(Eq, Hash)
 
@@ -66,8 +72,8 @@ pub fn Expr::bin(bool : Bool) -> Expr {
 }
 
 ///|
-pub fn Expr::i32(int : Int) -> Expr {
-  I32(int)
+pub fn Expr::u32(u32 : UInt) -> Expr {
+  U32(u32)
 }
 
 ///|
@@ -81,47 +87,52 @@ pub fn Var::get(self : Var, index : Expr) -> Expr {
 }
 
 ///|
-pub fn Var::set(self : Var, index : Expr, value : Expr) -> Expr {
-  Set(self, index, value)
+pub fn Var::set_idx(self : Var, index : Expr, value : Expr) -> Expr {
+  Set(Get(self, index), value)
+}
+
+///|
+pub fn Var::set(self : Var, value : Expr) -> Expr {
+  Set(Var(self), value)
 }
 
 ///|
 pub fn Expr::add(self : Expr, other : Expr) -> Expr {
   match (self, other) {
-    (I32(self), I32(other)) => I32(self + other)
-    (I32(0), other) => other
-    (self, I32(0)) => self
+    (U32(self), U32(other)) => U32(self + other)
+    (U32(0), other) => other
+    (self, U32(0)) => self
     (Sub(a, b), c) => if b == c { a } else { Add(Sub(a, b), c) }
     (self, other) => Add(self, other)
   }
 }
 
 ///|
-pub fn Expr::add_i32(self : Expr, int : Int) -> Expr {
-  self.add(I32(int))
+pub fn Expr::add_u32(self : Expr, u32 : UInt) -> Expr {
+  self.add(U32(u32))
 }
 
 ///|
 pub fn Expr::sub(self : Expr, other : Expr) -> Expr {
   match (self, other) {
-    (I32(self), I32(other)) => I32(self + other)
-    (self, I32(0)) => self
-    (self, other) => if self == other { I32(0) } else { Sub(self, other) }
+    (U32(self), U32(other)) => U32(self + other)
+    (self, U32(0)) => self
+    (self, other) => if self == other { U32(0) } else { Sub(self, other) }
   }
 }
 
 ///|
-pub fn Expr::sub_i32(self : Expr, int : Int) -> Expr {
-  self.sub(I32(int))
+pub fn Expr::sub_u32(self : Expr, u32 : UInt) -> Expr {
+  self.sub(U32(u32))
 }
 
 ///|
 pub fn Expr::mul(self : Expr, other : Expr) -> Expr {
   match (self, other) {
-    (I32(self), I32(other)) => I32(self * other)
-    (I32(0), _) | (_, I32(0)) => I32(0)
-    (I32(1), other) => other
-    (self, I32(1)) => self
+    (U32(self), U32(other)) => U32(self * other)
+    (U32(0), _) | (_, U32(0)) => U32(0)
+    (U32(1), other) => other
+    (self, U32(1)) => self
     (Div(self, self_div), other) =>
       if self_div == other {
         self.sub(self.mod(self_div))
@@ -133,46 +144,46 @@ pub fn Expr::mul(self : Expr, other : Expr) -> Expr {
 }
 
 ///|
-pub fn Expr::mul_i32(self : Expr, int : Int) -> Expr {
-  self.mul(I32(int))
+pub fn Expr::mul_u32(self : Expr, u32 : UInt) -> Expr {
+  self.mul(U32(u32))
 }
 
 ///|
 pub fn Expr::div(self : Expr, other : Expr) -> Expr {
   match (self, other) {
-    (_, I32(0)) => abort("Division by zero")
-    (I32(self), I32(other)) => I32(self / other)
-    (self, I32(1)) => self
+    (_, U32(0)) => abort("Division by zero")
+    (U32(self), U32(other)) => U32(self / other)
+    (self, U32(1)) => self
     (Mul(a, b), c) => if b == c { a } else { Div(Mul(a, b), c) }
     (self, other) => Div(self, other)
   }
 }
 
 ///|
-pub fn Expr::div_i32(self : Expr, int : Int) -> Expr {
-  self.div(I32(int))
+pub fn Expr::div_u32(self : Expr, u32 : UInt) -> Expr {
+  self.div(U32(u32))
 }
 
 ///|
 pub fn Expr::mod(self : Expr, other : Expr) -> Expr {
   match (self, other) {
-    (_, I32(0)) => abort("Division by zero")
-    (I32(self), I32(other)) => I32(self % other)
-    (_, I32(1)) => I32(0)
-    (Mul(a, b), c) => if b == c { I32(0) } else { Mod(Mul(a, b), c) }
+    (_, U32(0)) => abort("Division by zero")
+    (U32(self), U32(other)) => U32(self % other)
+    (_, U32(1)) => U32(0)
+    (Mul(a, b), c) => if b == c { U32(0) } else { Mod(Mul(a, b), c) }
     (self, other) => Mod(self, other)
   }
 }
 
 ///|
-pub fn Expr::mod_i32(self : Expr, int : Int) -> Expr {
-  self.mod(I32(int))
+pub fn Expr::mod_u32(self : Expr, u32 : UInt) -> Expr {
+  self.mod(U32(u32))
 }
 
 ///|
 pub fn Expr::cmp_lt(self : Expr, other : Expr) -> Expr {
   match (self, other) {
-    (I32(self), I32(other)) => Bin(self < other)
+    (U32(self), U32(other)) => Bin(self < other)
     (self, other) => Cmp(Lt, self, other)
   }
 }
@@ -183,8 +194,8 @@ pub fn Expr::cmp_ge(self : Expr, other : Expr) -> Expr {
 }
 
 ///|
-pub fn Expr::cmp_ge_i32(self : Expr, i32 : Int) -> Expr {
-  self.cmp_ge(I32(i32))
+pub fn Expr::cmp_ge_u32(self : Expr, u32 : UInt) -> Expr {
+  self.cmp_ge(U32(u32))
 }
 
 ///|
@@ -201,6 +212,11 @@ pub fn Expr::let_(var : Int, value : Expr, body : Expr) -> Expr {
 }
 
 ///|
+pub fn Expr::mut_(var : Int, value : Expr, body : Expr) -> Expr {
+  Mut(var, value, body)
+}
+
+///|
 pub fn Expr::sel(self : Expr, if_true : Expr, if_false : Expr) -> Expr {
   match self {
     Bin(true) => if_true
@@ -210,40 +226,77 @@ pub fn Expr::sel(self : Expr, if_true : Expr, if_false : Expr) -> Expr {
 }
 
 ///|
-pub fn Expr::for_(self : Int, length : Int, body : Expr) -> Expr {
+pub fn Expr::for_(self : Int, length : UInt, body : Expr) -> Expr {
   For(self, length, body)
 }
 
 ///|
+pub fn Expr::seq(self : Expr, other : Expr) -> Expr {
+  Seq(self, other)
+}
+
+///|
 pub impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
-  match self {
-    Bin(true) => logger.write_string("true")
-    Bin(false) => logger.write_string("false")
-    I32(int) => logger.write_string(int.to_string())
-    Var(var) => var.output(logger)
-    Add(a, b) => logger.write_string("\{a} + \{b}")
-    Sub(a, b) => logger.write_string("\{a} - \{b}")
-    Mul(a, b) => logger.write_string("\{a} * \{b}")
-    Div(a, b) => logger.write_string("\{a} / \{b}")
-    Mod(a, b) => logger.write_string("\{a} % \{b}")
-    Get(x, i) => logger.write_string("\{x}[\{i}]")
-    Set(x, i, v) => logger.write_string("\{x}[\{i}] = \{v}")
-    Cmp(Lt, a, b) => logger.write_string("\{a} < \{b}")
-    Not(a) => logger.write_string("!\{a}")
-    Sel(cond, if_true, if_false) =>
-      logger.write_string("if \{cond} \{if_true} else \{if_false}")
-    Let(var, expr, body) => {
-      logger.write_string("let tmp_\{var} = \{expr} in")
-      logger.write_string("\{body}")
+  fn output(self : Expr, logger : &Logger, level : Int) -> Unit {
+    fn write_newline(logger : &Logger, level : Int) -> Unit {
+      logger.write_string("\n")
+      for _ in 0..<level {
+        logger.write_string("  ")
+      }
     }
-    Mut(var, expr) => logger.write_string("tmp_\{var} = \{expr}")
-    Seq(a, b) => logger.write_string("\{a}\n\{b}")
-    For(var, len, expr) => {
-      logger.write_string("for tmp_\{var} in 0..\{len} {\n")
-      logger.write_string("  \{expr}\n")
-      logger.write_string("}")
+
+    match self {
+      Bin(true) => logger.write_string("true")
+      Bin(false) => logger.write_string("false")
+      U32(int) => logger.write_string(int.to_string())
+      Var(var) => var.output(logger)
+      Add(a, b) => logger.write_string("\{a} + \{b}")
+      Sub(a, b) => logger.write_string("\{a} - \{b}")
+      Mul(a, b) => logger.write_string("\{a} * \{b}")
+      Div(a, b) => logger.write_string("\{a} / \{b}")
+      Mod(a, b) => logger.write_string("\{a} % \{b}")
+      Get(x, i) => logger.write_string("\{x}[\{i}]")
+      Set(Get(x, i), v) => logger.write_string("\{x}[\{i}] = \{v}")
+      Set(Var(x), v) => logger.write_string("\{x} = \{v}")
+      Cmp(Lt, a, b) => logger.write_string("\{a} < \{b}")
+      Not(a) => logger.write_string("!\{a}")
+      Sel(cond, if_true, if_false) => {
+        logger.write_string("if \{cond} {")
+        write_newline(logger, level + 1)
+        output(if_true, logger, level + 1)
+        write_newline(logger, level)
+        logger.write_string("} else {")
+        write_newline(logger, level + 1)
+        output(if_false, logger, level + 1)
+        write_newline(logger, level)
+        logger.write_string("}")
+      }
+      Let(var, expr, body) => {
+        logger.write_string("let tmp_\{var} = \{expr} in")
+        write_newline(logger, level)
+        output(body, logger, level)
+      }
+      Mut(var, expr, body) => {
+        logger.write_string("var tmp_\{var} = \{expr} in")
+        write_newline(logger, level)
+        output(body, logger, level)
+      }
+      Seq(a, b) => {
+        output(a, logger, level)
+        write_newline(logger, level)
+        output(b, logger, level)
+      }
+      For(var, len, expr) => {
+        logger.write_string("for tmp_\{var} in 0..\{len} {")
+        write_newline(logger, level + 1)
+        output(expr, logger, level + 1)
+        write_newline(logger, level)
+        logger.write_string("}")
+      }
     }
   }
+
+  output(self, logger, 0)
 }
 
 ///|
@@ -251,7 +304,7 @@ pub impl ToJson for Expr with to_json(self : Expr) -> Json {
   match self {
     Bin(true) => Json::True
     Bin(false) => Json::False
-    I32(i32) => Json::Number(i32.to_double())
+    U32(u32) => Json::Number(u32.to_float().to_double())
     Var(var) => var.to_string().to_json()
     Add(a, b) => { "add": [a.to_json(), b.to_json()] }
     Sub(a, b) => { "sub": [a.to_json(), b.to_json()] }
@@ -259,7 +312,8 @@ pub impl ToJson for Expr with to_json(self : Expr) -> Json {
     Div(a, b) => { "div": [a.to_json(), b.to_json()] }
     Mod(a, b) => { "mod": [a.to_json(), b.to_json()] }
     Get(a, b) => { "get": [a.to_json(), b.to_json()] }
-    Set(a, b, c) => { "set": [a.to_json(), b.to_json(), c.to_json()] }
+    Set(Get(x, i), v) => { "set": [x.to_json(), i.to_json(), v.to_json()] }
+    Set(Var(x), v) => { "set": [x.to_json(), v.to_json()] }
     Cmp(Lt, a, b) => { "cmp": { "lt": [a.to_json(), b.to_json()] } }
     Not(a) => { "not": a.to_json() }
     Sel(cond, if_true, if_false) =>
@@ -282,86 +336,18 @@ pub impl ToJson for Expr with to_json(self : Expr) -> Json {
       {
         "for": {
           "var": var.to_json(),
-          "length": length.to_json(),
+          "length": length.to_float().to_json(),
+          "body": body.to_json(),
+        },
+      }
+    Mut(var, expr, body) =>
+      {
+        "mut": {
+          "var": var.to_json(),
+          "expr": expr.to_json(),
           "body": body.to_json(),
         },
       }
     Seq(a, b) => [a.to_json(), b.to_json()]
   }
-}
-
-///|
-pub fn Expr::atomize(self : Expr) -> Expr {
-  let mut tmps = 0
-  let tmps_remap = []
-  let tmps_cache : Map[Expr, Int] = Map::new()
-  fn get_tmp(expr : Expr) -> Int {
-    guard let None = tmps_cache[expr] else { Some(tmp_id) => tmp_id }
-    let tmp_id = tmps
-    tmps += 1
-    tmps_cache[expr] = tmp_id
-    tmp_id
-  }
-
-  fn let_tmp(expr : Expr, k : (Expr) -> Expr) -> Expr {
-    guard let None = tmps_cache[expr] else {
-      Some(tmp_id) => k(var(tmp(tmp_id)))
-    }
-    let tmp_id = get_tmp(expr)
-    let tmp_var = var(tmp(tmp_id))
-    return let_(tmp_id, expr, k(tmp_var))
-  }
-
-  fn map_tmp(tmp : Int, expr : Expr) -> Unit {
-    while tmps_remap.length() < tmp + 1 {
-      tmps_remap.push(None)
-    }
-    tmps_remap[tmp] = Some(expr)
-  }
-
-  fn id(expr : Expr) -> Expr {
-    expr
-  }
-
-  fn atomize(expr : Expr, k : (Expr) -> Expr) -> Expr {
-    match expr {
-      I32(val) => k(i32(val))
-      Bin(val) => k(bin(val))
-      Var(Arg(id)) => k(var(arg(id)))
-      Var(Tmp(id)) =>
-        match tmps_remap[id] {
-          None => abort("Tmp variable not found")
-          Some(expr) => k(expr)
-        }
-      Var(Idx(id)) => k(var(idx(id)))
-      Add(a, b) =>
-        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(add(a, b), k) }) })
-      Sub(a, b) =>
-        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(sub(a, b), k) }) })
-      Mul(a, b) =>
-        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(mul(a, b), k) }) })
-      Div(a, b) =>
-        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(div(a, b), k) }) })
-      Mod(a, b) =>
-        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(mod(a, b), k) }) })
-      Get(a, b) => atomize(b, fn(b) { let_tmp(get(a, b), k) })
-      Set(a, b, c) =>
-        atomize(b, fn(b) { atomize(c, fn(c) { let_tmp(set(a, b, c), k) }) })
-      Cmp(Lt, a, b) =>
-        atomize(a, fn(a) { atomize(b, fn(b) { let_tmp(cmp_lt(a, b), k) }) })
-      Not(a) => atomize(a, fn(a) { let_tmp(Expr::not(a), k) })
-      Sel(cond, if_true, if_false) =>
-        atomize(cond, fn(cond) {
-          let sel_val = sel(cond, atomize(if_true, id), atomize(if_false, id))
-          let_tmp(sel_val, k)
-        })
-      Let(var, expr, body) =>
-        atomize(expr, fn(expr) {
-          map_tmp(var, expr)
-          k(atomize(body, id))
-        })
-    }
-  }
-
-  atomize(self, fn(expr) { expr })
 }

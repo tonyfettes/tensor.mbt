@@ -1,6 +1,7 @@
 {
   "import": [
     "tonyfettes/tensor/kernel/expr",
-    "tonyfettes/tensor/kernel/type"
+    "tonyfettes/tensor/kernel/type",
+    "tonyfettes/tensor/kernel"
   ]
 }

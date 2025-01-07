@@ -11,6 +11,12 @@ enum DtypeArray {
 }
 
 ///|
+enum Dtype {
+  I32
+  F32
+}
+
+///|
 pub fn DtypeArray::new(dtype : Dtype, length : Int) -> DtypeArray {
   match dtype {
     I32 => I32(FixedArray::make(length, 0))
@@ -52,12 +58,6 @@ pub impl ToDtypeArray for Float with to_dtype_array(self : FixedArray[Float]) ->
 }
 
 ///|
-pub(all) enum Dtype {
-  I32
-  F32
-}
-
-///|
 pub fn DtypeArray::dtype(self : DtypeArray) -> Dtype {
   match self {
     I32(_) => I32
@@ -65,7 +65,7 @@ pub fn DtypeArray::dtype(self : DtypeArray) -> Dtype {
   }
 }
 
-///|s
+///|
 trait ToDtypeValue {
   to_dtype_value(Self) -> DtypeValue
 }
