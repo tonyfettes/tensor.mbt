@@ -366,23 +366,34 @@ test {
   let a = Tensor::new([2, 3], Val([1]))
   let b = Tensor::new([3, 2], Val([7]))
   let c = a.matmul(b)
+  let d = c.matmul(c)
   inspect!(
-    @wgsl.ToWgsl::to_wgsl(c.compile()),
+    d.compile().kernel(),
     content=
-      #|@group(0) @binding(1)
-      #|var<storage, read_write> arg1: array<i32>;
-      #|@group(0) @binding(2)
-      #|var<storage, read_write> arg2: array<i32>;
-      #|@group(0) @binding(3)
-      #|var<storage, read_write> arg3: array<i32>;
-      #|@compute
-      #|fn main(
-      #|  @builtin(global_invocation_id)
-      #|  global_id : vec3u,
-      #|) {
-      #|  let idx0 = global_id.x;
-      #|  var tmp0 = u32(0); for (var tmp1 = u32(0); tmp1 < 3; tmp1++) { let tmp2 = idx1 * u32(3) + tmp1; let tmp3 = arg1[tmp2]; let tmp4 = idx0 * u32(3) + tmp1; let tmp5 = arg2[tmp4]; let tmp6 = tmp3 * tmp5; tmp0 = tmp0 + tmp6; }; arg0[idx0 * u32(2) + idx1] = tmp0;
+      #|var tmp_0 = 0 in
+      #|for tmp_1 in 0..2 {
+      #|  var tmp_2 = 0 in
+      #|  for tmp_3 in 0..3 {
+      #|    let tmp_4 = idx_1 * 2 + tmp_1 % 2 * 3 + tmp_3 in
+      #|    let tmp_5 = arg_1[tmp_4] in
+      #|    let tmp_6 = idx_1 * 2 + tmp_1 / 2 * 3 + tmp_3 in
+      #|    let tmp_7 = arg_2[tmp_6] in
+      #|    let tmp_8 = tmp_5 * tmp_7 in
+      #|    tmp_2 = tmp_2 + tmp_8
+      #|  }
+      #|  var tmp_9 = 0 in
+      #|  for tmp_10 in 0..3 {
+      #|    let tmp_11 = idx_0 * 2 + tmp_1 % 2 * 3 + tmp_10 in
+      #|    let tmp_12 = arg_3[tmp_11] in
+      #|    let tmp_13 = idx_0 * 2 + tmp_1 / 2 * 3 + tmp_10 in
+      #|    let tmp_14 = arg_4[tmp_13] in
+      #|    let tmp_15 = tmp_12 * tmp_14 in
+      #|    tmp_9 = tmp_9 + tmp_15
+      #|  }
+      #|  let tmp_16 = tmp_2 * tmp_9 in
+      #|  tmp_0 = tmp_0 + tmp_16
       #|}
+      #|arg_0[idx_0 * 2 + idx_1] = tmp_0
     ,
   )
 }

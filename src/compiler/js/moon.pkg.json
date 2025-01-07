@@ -1,5 +1,6 @@
 {
   "import": [
-    "tonyfettes/tensor/engine"
+    "tonyfettes/tensor/engine",
+    "tonyfettes/tensor/kernel"
   ]
 }

@@ -4,7 +4,7 @@ trait ToJs {
 }
 
 ///|
-pub impl ToJs for @engine.Schedule with to_js(self : @engine.Schedule) -> String {
+pub impl ToJs for @kernel.Kernel with to_js(self : @kernel.Kernel) -> String {
   let content = StringBuilder::new()
   content.write_string(
     #|const isNode = typeof process !== "undefined";
@@ -18,7 +18,7 @@ pub impl ToJs for @engine.Schedule with to_js(self : @engine.Schedule) -> String
     #|const device = await adapter.requestDevice();
     #|
     #|async function onMessage(event) {
-    #|  const { shared, 
+    #|  const { data, args } = event;
     #|}
     ,
   )
