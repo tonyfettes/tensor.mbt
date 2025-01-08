@@ -1,7 +1,4 @@
 ///|
-struct Wgsl {}
-
-///|
 pub trait ToWgsl {
   to_wgsl(Self) -> String
 }
@@ -11,6 +8,7 @@ pub impl ToWgsl for @type.Type with to_wgsl(self : @type.Type) -> String {
   match self {
     I32 => "i32"
     F32 => "f32"
+    Arr(ty, len) => "array<\{ty.to_wgsl()}, \{len.to_string()}>"
   }
 }
 
@@ -20,6 +18,7 @@ pub impl ToWgsl for @expr.Var with to_wgsl(self : @expr.Var) -> String {
     Arg(id) => "arg\{id}"
     Tmp(id) => "tmp\{id}"
     Idx(id) => "idx\{id}"
+    Out => "out"
   }
 }
 
@@ -27,7 +26,7 @@ pub impl ToWgsl for @expr.Var with to_wgsl(self : @expr.Var) -> String {
 pub impl ToWgsl for @expr.Left with to_wgsl(self : @expr.Left) -> String {
   match self {
     Get(var, idx) => "\{var.to_wgsl()}[\{idx.to_wgsl()}]"
-    Var(var) => var.to_wgsl()
+    Var(var) => "tmp\{var}"
   }
 }
 
@@ -57,9 +56,9 @@ pub impl ToWgsl for @expr.Expr with to_wgsl(self : @expr.Expr) -> String {
 }
 
 ///|
-pub impl ToWgsl for @kernel.Kernel with to_wgsl(self : @kernel.Kernel) -> String {
+pub impl ToWgsl for @tensor.Kernel with to_wgsl(self : @tensor.Kernel) -> String {
   let content = StringBuilder::new()
-  for i, input in self.buffer() {
+  for i, input in self.params() {
     content.write_string(
       $|@group(0) @binding(\{i + 1})
       $|var<storage, read_write> arg\{i + 1}: array<\{input.to_wgsl()}>;
@@ -74,7 +73,7 @@ pub impl ToWgsl for @kernel.Kernel with to_wgsl(self : @kernel.Kernel) -> String
     $|  global_id : vec3u,
     $|) {
     $|  let idx0 = global_id.x;
-    $|  \{self.kernel().to_wgsl()};
+    $|  \{self.value().to_wgsl()};
     $|}
     ,
   )

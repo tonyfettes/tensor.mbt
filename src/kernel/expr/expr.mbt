@@ -3,6 +3,7 @@ pub enum Var {
   Arg(Int)
   Tmp(Int)
   Idx(Int)
+  Out
 } derive(Eq, Hash)
 
 ///|
@@ -20,12 +21,15 @@ pub fn Var::idx(id : Int) -> Var {
   Idx(id)
 }
 
+pub let out : Var = Out
+
 ///|
-impl Show for Var with output(self : Var, logger : &Logger) -> Unit {
+pub impl Show for Var with output(self : Var, logger : &Logger) -> Unit {
   match self {
-    Arg(id) => logger.write_string("arg_\{id}")
-    Tmp(id) => logger.write_string("tmp_\{id}")
-    Idx(id) => logger.write_string("idx_\{id}")
+    Arg(id) => logger.write_string("arg\{id}")
+    Tmp(id) => logger.write_string("tmp\{id}")
+    Idx(id) => logger.write_string("idx\{id}")
+    Out => logger.write_string("out")
   }
 }
 
@@ -42,7 +46,7 @@ pub enum Cmp {
 ///|
 pub enum Left {
   Get(Var, Expr)
-  Var(Var)
+  Var(Int)
 } derive(Eq, Hash)
 
 ///|
@@ -92,7 +96,7 @@ pub fn Var::set_idx(self : Var, index : Expr, value : Expr) -> Expr {
 }
 
 ///|
-pub fn Var::set(self : Var, value : Expr) -> Expr {
+pub fn Var::set(self : Int, value : Expr) -> Expr {
   Set(Var(self), value)
 }
 
@@ -257,7 +261,7 @@ pub impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
       Mod(a, b) => logger.write_string("\{a} % \{b}")
       Get(x, i) => logger.write_string("\{x}[\{i}]")
       Set(Get(x, i), v) => logger.write_string("\{x}[\{i}] = \{v}")
-      Set(Var(x), v) => logger.write_string("\{x} = \{v}")
+      Set(Var(x), v) => logger.write_string("tmp\{x} = \{v}")
       Cmp(Lt, a, b) => logger.write_string("\{a} < \{b}")
       Not(a) => logger.write_string("!\{a}")
       Sel(cond, if_true, if_false) => {
@@ -272,12 +276,12 @@ pub impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
         logger.write_string("}")
       }
       Let(var, expr, body) => {
-        logger.write_string("let tmp_\{var} = \{expr} in")
+        logger.write_string("let tmp\{var} = \{expr} in")
         write_newline(logger, level)
         output(body, logger, level)
       }
       Mut(var, expr, body) => {
-        logger.write_string("var tmp_\{var} = \{expr} in")
+        logger.write_string("var tmp\{var} = \{expr} in")
         write_newline(logger, level)
         output(body, logger, level)
       }
@@ -287,7 +291,7 @@ pub impl Show for Expr with output(self : Expr, logger : &Logger) -> Unit {
         output(b, logger, level)
       }
       For(var, len, expr) => {
-        logger.write_string("for tmp_\{var} in 0..\{len} {")
+        logger.write_string("for tmp\{var} in 0..\{len} {")
         write_newline(logger, level + 1)
         output(expr, logger, level + 1)
         write_newline(logger, level)

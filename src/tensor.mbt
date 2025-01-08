@@ -2,7 +2,10 @@
 struct Tensor[T] {
   shape : Array[UInt]
   mut block : Array[UInt]?
+  value : FixedArray[T]?
   graph : Graph[T]
+  device : &Device
+  mut buffer : Int?
 } derive(Show)
 
 ///|
@@ -22,14 +25,19 @@ impl[T : Eq] Eq for Tensor[T] with op_equal(self : Tensor[T], other : Tensor[T])
 }
 
 ///|
-fn Tensor::new[T](shape : Array[UInt], graph : Graph[T]) -> Tensor[T] {
-  { shape, block: None, graph }
+fn Tensor::new[T](
+  shape : Array[UInt],
+  graph : Graph[T],
+  block? : Array[UInt],
+  device~ : &Device = cpu
+) -> Tensor[T] {
+  { shape, block, value: None, graph, device, buffer: None }
 }
 
 ///|
 fn Tensor::block[T](self : Tensor[T]) -> Array[UInt] {
   guard let None = self.block else { Some(block) => block }
-  let block = compute_block_size(self.shape)
+  let block = compute_block(self.shape)
   self.block = Some(block)
   block
 }
@@ -47,7 +55,7 @@ enum Graph[T] {
   Binary(Binary, Tensor[T], Tensor[T])
   Reduce(Binary, Tensor[T], Int)
   Concat(FixedArray[Tensor[T]], Int)
-  Broadcast(Tensor[T])
+  Expand(Tensor[T])
 } derive(Eq, Show)
 
 ///|
@@ -61,7 +69,7 @@ impl[T : Hash] Hash for Graph[T] with hash_combine(
     Binary(_) => 2
     Reduce(_) => 3
     Concat(_) => 4
-    Broadcast(_) => 5
+    Expand(_) => 5
   }
   hasher.combine(tag_id)
   match self {
@@ -86,7 +94,7 @@ impl[T : Hash] Hash for Graph[T] with hash_combine(
       }
       hasher.combine(dim)
     }
-    Broadcast(x) => hasher.combine(x)
+    Expand(x) => hasher.combine(x)
   }
 }
 
@@ -104,7 +112,7 @@ fn lcm(a : UInt, b : UInt) -> UInt {
 }
 
 ///|
-fn compute_block_size(shape : Array[UInt]) -> Array[UInt] {
+fn compute_block(shape : Array[UInt]) -> Array[UInt] {
   let mut dimension = shape.length()
   let block = Array::make(dimension, 1U)
   dimension -= 1
@@ -136,8 +144,8 @@ pub fn Tensor::broadcast[T](
     let shape_i = i + other_dim_offset
     shape[shape_i] = lcm(shape[shape_i], other_shape[i])
   }
-  let self = Tensor::new(shape, Broadcast(self))
-  let other = Tensor::new(shape, Broadcast(other))
+  let self = Tensor::new(shape, Expand(self))
+  let other = Tensor::new(shape, Expand(other))
   (self, other)
 }
 
@@ -150,13 +158,32 @@ pub fn Tensor::add[T](self : Tensor[T], other : Tensor[T]) -> Tensor[T] {
 ///|
 trait Dtype {
   compile() -> @type.Type
+  into(FixedArray[Self]) -> @dtype.DtypeArray
+  from(@dtype.DtypeArray) -> FixedArray[Self]
 }
 
 ///|
-fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
+fn Tensor::compute[T : Hash + Eq + Show + Default + Dtype](
   self : Tensor[T]
-) -> @kernel.Kernel {
+) -> Unit {
+  let schedule = self.schedule()
+  self.device.execute(schedule)
+}
+
+///|
+fn Tensor::value[T : Hash + Eq + Show + Default + Dtype](
+  self : Tensor[T]
+) -> FixedArray[T] {
+  self.compute()
+  T::from(self.device.get(self.buffer.unwrap()))
+}
+
+///|
+fn Tensor::schedule[T : Hash + Eq + Show + Default + Dtype](
+  self : Tensor[T]
+) -> Array[Schedule] {
   let args : Array[@type.Type] = []
+  let bufs : Array[(Int, @expr.Var)] = []
   let mut tmps = 0
   let tmps_cache : Map[@expr.Expr, Int] = Map::new()
   let expr_cache : Map[(Tensor[T], @immut/array.T[@expr.Expr]), @expr.Expr] = Map::new()
@@ -182,16 +209,15 @@ fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
   }
 
   fn compute_flat_index(
-    self : Tensor[T],
-    index : Array[@expr.Expr]
+    index : Array[@expr.Expr],
+    shape : Array[UInt],
+    block : Array[UInt]
   ) -> @expr.Expr {
-    let shape = self.shape
-    let block = self.block()
-    let mut total = @expr.u32(0)
+    let mut flat = @expr.u32(0)
     for i in 0..<shape.length() {
-      total = total.add(index[i].mul_u32(block[i]))
+      flat = flat.add(index[i].mul_u32(block[i]))
     }
-    total
+    flat
   }
 
   fn compile(
@@ -199,6 +225,9 @@ fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
     index : Array[@expr.Expr],
     k : (@expr.Expr) -> @expr.Expr
   ) -> @expr.Expr {
+    let shape = self.shape
+    let block = self.block()
+    let total = if shape.length() == 0 { 1U } else { shape[0] * block[0] }
     let immut_index = @immut/array.from_iter(index.iter())
     guard let None = expr_cache[(self, immut_index)] else {
       Some(expr) => k(expr)
@@ -207,10 +236,39 @@ fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
       expr_cache[(self, immut_index)] = expr
       k(expr)
     }
+    guard let None = self.buffer else {
+      Some(buf) => {
+        let idx = compute_flat_index(index, shape, block)
+        let arg = for b in bufs {
+          if b.0 == buf {
+            break b.1
+          }
+        } else {
+          let arg = get_arg(@type.arr(T::compile(), total))
+          bufs.push((buf, arg))
+          arg
+        }
+        let_tmp(idx, fn(idx) { let_tmp(@expr.get(arg, idx), k) })
+      }
+    }
+    guard let None = self.value else {
+      Some(value) => {
+        println("self.value: \{self.value}")
+        let idx = compute_flat_index(index, shape, block)
+        let arg = get_arg(@type.arr(T::compile(), total))
+        let buf = self.device.new(T::into(value))
+        self.buffer = Some(buf)
+        bufs.push((buf, arg))
+        let_tmp(idx, fn(idx) { let_tmp(@expr.get(arg, idx), k) })
+      }
+    }
     match self.graph {
       Val(val) => {
-        let idx = compute_flat_index(self, index)
-        let arg = get_arg(T::compile())
+        let idx = compute_flat_index(index, shape, block)
+        let arg = get_arg(@type.arr(T::compile(), total))
+        let buf = self.device.new(T::into(val))
+        self.buffer = Some(buf)
+        bufs.push((buf, arg))
         let_tmp(idx, fn(idx) { let_tmp(@expr.get(arg, idx), k) })
       }
       Binary(op, a, b) =>
@@ -224,7 +282,7 @@ fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
           })
         })
       Get(a) => {
-        let mut f_index = compute_flat_index(self, index)
+        let mut f_index = compute_flat_index(index, shape, block)
         let a_index = []
         for b in a.block() {
           a_index.push(f_index.div_u32(b))
@@ -232,7 +290,7 @@ fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
         }
         compile(a, a_index, k)
       }
-      Broadcast(a) => {
+      Expand(a) => {
         let a_index = []
         for i, s in a.shape {
           if self.shape[i] == s {
@@ -270,7 +328,7 @@ fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
                   Add => sum_var.add(a_expr)
                   Mul => sum_var.add(a_expr)
                 }
-                sum_tmp.set(val)
+                @expr.set(sum_id, val)
               }),
             ),
             k(sum_var),
@@ -293,16 +351,23 @@ fn Tensor::compile[T : Hash + Eq + Show + Default + Dtype](
     }
   }
 
+  let shape = self.shape
+  let block = compute_block(shape)
+  let total = self.shape.fold(init=1U, fn(acc, s) { acc * s })
   let index = Array::makei(self.shape.length(), fn(i) {
     @expr.var(@expr.idx(i))
   })
-  let f_index = compute_flat_index(self, index)
-  let arg = get_arg(T::compile())
+  let f_index = compute_flat_index(index, shape, block)
   let kernel = compile(self, index, fn(expr) {
-    @expr.set_idx(arg, f_index, expr)
+    @expr.set_idx(@expr.out, f_index, expr)
   })
-  let kernel = @kernel.Kernel::new(args, kernel)
-  kernel
+  let out_buf = self.device.new(
+    @dtype.i32(FixedArray::make(total.reinterpret_as_int(), 0)),
+  )
+  self.buffer = Some(out_buf)
+  let out_ty = @type.arr(T::compile(), total)
+  let kernel = Kernel::new(args, out_ty, self.shape, kernel)
+  [{ inputs: bufs.map(fn(buf) { buf.0 }), output: out_buf, kernel }]
 }
 
 ///|
@@ -312,6 +377,7 @@ pub fn Tensor::reshape[T](self : Tensor[T], shape : Array[UInt]) -> Tensor[T] {
 
 ///|
 pub fn Tensor::mul[T](self : Tensor[T], other : Tensor[T]) -> Tensor[T] {
+  let (self, other) = self.broadcast(other)
   Tensor::new(self.shape, Binary(Mul, self, other))
 }
 
@@ -341,7 +407,6 @@ pub fn Tensor::matmul[T](self : Tensor[T], other : Tensor[T]) -> Tensor[T] {
     [.. as shape, r, c] => other.reshape([..shape, r, 1, c])
     _ => abort("")
   }
-  let (self, other) = broadcast(self, other)
   let dot = self.mul(other)
   dot.sum(dot.shape.length() - 1)
 }
@@ -356,44 +421,61 @@ pub fn Tensor::transpose[T](
   let block = self.block().copy()
   shape.swap(dim0, dim1)
   block.swap(dim0, dim1)
-  Tensor::{ shape, block: Some(block), graph: Get(self) }
+  Tensor::{
+    shape,
+    block: Some(block),
+    value: None,
+    graph: Get(self),
+    device: self.device,
+    buffer: None,
+  }
 }
 
 ///|
 impl Dtype for Int with compile() -> @type.Type { @type.I32 }
 
+///|
+impl Dtype for Int with into(self : FixedArray[Int]) -> @dtype.DtypeArray {
+  @dtype.i32(self)
+}
+
+///|
+impl Dtype for Int with from(self : @dtype.DtypeArray) -> FixedArray[Int] {
+  match self {
+    I32(array) => array
+    _ => abort("")
+  }
+}
+
 test {
-  let a = Tensor::new([2, 3], Val([1]))
-  let b = Tensor::new([3, 2], Val([7]))
-  let c = a.matmul(b)
-  let d = c.matmul(c)
-  inspect!(
-    d.compile().kernel(),
-    content=
-      #|var tmp_0 = 0 in
-      #|for tmp_1 in 0..2 {
-      #|  var tmp_2 = 0 in
-      #|  for tmp_3 in 0..3 {
-      #|    let tmp_4 = idx_1 * 2 + tmp_1 % 2 * 3 + tmp_3 in
-      #|    let tmp_5 = arg_1[tmp_4] in
-      #|    let tmp_6 = idx_1 * 2 + tmp_1 / 2 * 3 + tmp_3 in
-      #|    let tmp_7 = arg_2[tmp_6] in
-      #|    let tmp_8 = tmp_5 * tmp_7 in
-      #|    tmp_2 = tmp_2 + tmp_8
-      #|  }
-      #|  var tmp_9 = 0 in
-      #|  for tmp_10 in 0..3 {
-      #|    let tmp_11 = idx_0 * 2 + tmp_1 % 2 * 3 + tmp_10 in
-      #|    let tmp_12 = arg_3[tmp_11] in
-      #|    let tmp_13 = idx_0 * 2 + tmp_1 / 2 * 3 + tmp_10 in
-      #|    let tmp_14 = arg_4[tmp_13] in
-      #|    let tmp_15 = tmp_12 * tmp_14 in
-      #|    tmp_9 = tmp_9 + tmp_15
-      #|  }
-      #|  let tmp_16 = tmp_2 * tmp_9 in
-      #|  tmp_0 = tmp_0 + tmp_16
-      #|}
-      #|arg_0[idx_0 * 2 + idx_1] = tmp_0
-    ,
+  let v = Tensor::new(
+    [2, 2, 3],
+    Val([7, 18, 33, 28, 45, 66, 8, 20, 36, 32, 50, 72]),
   )
+  let s = v.sum(v.shape.length() - 1)
+  inspect!(s.value(), content="[58, 139, 64, 154]")
+}
+
+test {
+  let a = Tensor::new([1, 2, 3], Val([1, 2, 3, 4, 5, 6]))
+  let b = Tensor::new([2, 1, 3], Val([7, 9, 11, 8, 10, 12]))
+  let c = a.mul(b)
+  inspect!(c.shape, content="[2, 2, 3]")
+  inspect!(c.value(), content="[7, 18, 33, 28, 45, 66, 8, 20, 36, 32, 50, 72]")
+}
+
+test {
+  let a = Tensor::new([1, 2, 3], Val([1, 2, 3, 4, 5, 6]))
+  let b = Tensor::new([2, 1, 3], Val([7, 9, 11, 8, 10, 12]))
+  let c = a.mul(b).sum(2)
+  inspect!(c.shape, content="[2, 2]")
+  inspect!(c.value(), content="[58, 139, 64, 154]")
+}
+
+test {
+  let a = Tensor::new([2, 3], Val([1, 2, 3, 4, 5, 6]))
+  let b = Tensor::new([3, 2], Val([7, 9, 11, 8, 10, 12]))
+  let c = a.matmul(b)
+  inspect!(c.shape, content="[2, 2]")
+  inspect!(c.value(), content="[58, 139, 64, 154]")
 }

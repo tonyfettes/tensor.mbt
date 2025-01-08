@@ -5,16 +5,30 @@ enum DtypeValue {
 }
 
 ///|
-enum DtypeArray {
+pub enum DtypeArray {
   I32(FixedArray[Int])
   F32(FixedArray[Float])
+} derive(Show, Eq)
+
+///|
+pub impl Hash for DtypeArray with hash_combine(self : DtypeArray, hasher : Hasher) -> Unit {
+  match self {
+    I32(array) =>
+      for value in array {
+        hasher.combine(value)
+      }
+    F32(array) =>
+      for value in array {
+        hasher.combine(value)
+      }
+  }
 }
 
 ///|
 enum Dtype {
   I32
   F32
-}
+} derive(Show)
 
 ///|
 pub fn DtypeArray::new(dtype : Dtype, length : Int) -> DtypeArray {

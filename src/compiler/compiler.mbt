@@ -1,4 +1,4 @@
 ///|
 pub(open) trait Compiler {
-  compile(@kernel.Kernel) -> String
+  compile(@tensor.Kernel) -> String
 }
